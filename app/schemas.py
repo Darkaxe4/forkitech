@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from typing import List, Optional
 
@@ -11,8 +11,7 @@ class WalletInfo(WalletInfoBase):
     energy: int
     timestamp: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class WalletQueryResponse(BaseModel):
     items: List[WalletInfo]

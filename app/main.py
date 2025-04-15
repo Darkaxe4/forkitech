@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
@@ -11,12 +12,16 @@ from .settings import get_settings, Settings
 from .models import WalletQuery
 from .schemas import WalletInfo, WalletInfoBase, WalletQueryResponse
 
-app = FastAPI(title="TRON Wallet Info Service")
-
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    yield
+    # Shutdown
+    await engine.dispose()
+
+app = FastAPI(title="TRON Wallet Info Service", lifespan=lifespan)
 
 @app.post("/wallet-info/", response_model=WalletInfo)
 async def get_wallet_info(
@@ -83,7 +88,4 @@ async def list_wallet_queries(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-
-
 

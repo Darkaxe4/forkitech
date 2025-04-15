@@ -1,23 +1,24 @@
 import pytest
-from httpx import AsyncClient
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 import asyncio
-from datetime import datetime
+from datetime import datetime, UTC
 from functools import lru_cache
+from pydantic import ConfigDict
 
 from app.main import app
 from app.database import Base, get_db
 from app.models import WalletQuery
 from app.settings import Settings, get_settings
 
-class TestSettings(Settings):
-    database_url: str = "sqlite+aiosqlite:///./test.db"
-    tron_network: str = "nile"  # Use testnet for testing
-
 @lru_cache()
 def get_test_settings() -> Settings:
-    return TestSettings()
+    return Settings(
+        database_url="sqlite+aiosqlite:///./test.db",
+        tron_network="nile"  # Use testnet for testing
+    )
 
 # Test database URL from settings
 engine = create_async_engine(
@@ -26,16 +27,17 @@ engine = create_async_engine(
 )
 TestingSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def test_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
-    async with TestingSessionLocal() as session:
-        yield session
-        
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    try:
+        async with TestingSessionLocal() as session:
+            yield session
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
 
 @pytest.fixture
 def override_get_db(test_db):
@@ -61,7 +63,7 @@ async def test_create_wallet_query(test_db):
         trx_balance=100.0,
         bandwidth=1000,
         energy=2000,
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(UTC)
     )
     
     test_db.add(wallet_query)
@@ -78,15 +80,28 @@ async def test_create_wallet_query(test_db):
 @pytest.mark.asyncio
 async def test_get_wallet_queries(app_client):
     """Integration test for the GET endpoint"""
-    async with AsyncClient(app=app_client, base_url="http://test") as ac:
-        response = await ac.get("/wallet-queries/?page=1&size=10")
+    expected_page = 1
+    expected_size = 10
+    
+    transport = ASGITransport(app=app_client)
+    async with AsyncClient(transport=transport, base_url="http://localhost") as ac:
+        response = await ac.get(f"/wallet-queries/?page={expected_page}&size={expected_size}")
     
     assert response.status_code == 200
     data = response.json()
-    assert "items" in data
-    assert "total" in data
-    assert "page" in data
-    assert "size" in data
-    assert data["page"] == 1
-    assert data["size"] == 10
+    
+    # Use more specific assertions
+    assert isinstance(data, dict), "Response should be a dictionary"
+    required_fields = {"items", "total", "page", "size"}
+    assert all(field in data for field in required_fields), f"Missing required fields. Expected: {required_fields}"
+    
+    assert data["page"] == expected_page, f"Expected page {expected_page}, got {data['page']}"
+    assert data["size"] == expected_size, f"Expected size {expected_size}, got {data['size']}"
+    
+    # Additional validation
+    assert isinstance(data["items"], list), "Items should be a list"
+    assert isinstance(data["total"], (int, float)), "Total should be a number"
+
+
+
 
